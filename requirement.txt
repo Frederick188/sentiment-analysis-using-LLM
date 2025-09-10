@@ -1,7 +1,0 @@
-pandas
-python-dotenv
-tabulate
-requests
-newsapi-python
-ftfy
-google-generativeai
