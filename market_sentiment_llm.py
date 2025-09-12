@@ -21,26 +21,29 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Initialize News API Client
 newsapi = NewsApiClient(api_key=NEWSAPI_KEY)
 
+
 # Cleaning Function
+
 def clean_text(text):
     if not text:
         return ""
     
-    text = ftfy.fix_text(text) # Fix mojibake and encoding issues
-    text = unicodedata.normalize("NFKD", text) # Normalize Unicode characters (fix weird encodings)
+    text = ftfy.fix_text(text)  # Fix mojibake and encoding issues
+    text = unicodedata.normalize("NFKD", text)  # Normalize Unicode characters
     text = re.sub(r"http\S+", "", text)  # Remove URLs
     text = re.sub(r"<.*?>", "", text)  # Remove HTML tags
     text = re.sub(r"\S+@\S+", "", text)  # Remove emails
     text = re.sub(r"[@#]\w+", "", text)  # Remove mentions and hashtags
-    text = re.sub(r"[^\x00-\x7F]+", " ", text) # Remove non-ASCII characters (emojis, symbols)
-    text = re.sub(r"[‘’“”…]", "'", text) # Remove special punctuation leftover from encoding issues
-    text = re.sub(r"[^a-zA-Z\s]", " ", text) # Keep only letters and spaces
-    text = text.lower() # Convert to lowercase
-    text = re.sub(r"\s+", " ", text).strip() # Replace spaces, newlines, tabs with a single space
+    text = re.sub(r"[^\x00-\x7F]+", " ", text)  # Remove non-ASCII characters
+    text = re.sub(r"[‘’“”…]", "'", text)  # Fix special punctuation
+    text = re.sub(r"[^a-zA-Z\s]", " ", text)  # Keep only letters and spaces
+    text = text.lower()  # Convert to lowercase
+    text = re.sub(r"\s+", " ", text).strip()  # Normalize spaces
     
     return text
 
-# Data Fetcher 
+
+# Data Fetcher
 def fetch_news(query="Artificial Intelligence", limit=10):
     ai_news = newsapi.get_everything(
         q=query,
@@ -62,12 +65,28 @@ def fetch_news(query="Artificial Intelligence", limit=10):
         for a in articles
     ]
 
+
 # Sentiment with Gemini
 def analyze_sentiment(text):
     model = genai.GenerativeModel("gemini-2.5-flash-lite")
-    prompt = f"Classify sentiment as Positive, Neutral, or Negative:\n\n{text}\n\nOnly return sentiment."
+    prompt = f"""
+    Analyze the sentiment of the following text and respond in strict JSON.
+    Text: {text}
+
+    Return in this format:
+    {{
+      "sentiment": "Positive" | "Neutral" | "Negative",
+      "score": float between -1 (very negative) and +1 (very positive)
+    }}
+    """
     resp = model.generate_content(prompt)
-    return resp.text.strip()
+
+    try:
+        result = json.loads(resp.text.strip())
+        return result.get("sentiment", "Neutral"), result.get("score", 0.0)
+    except Exception:
+        return "Neutral", 0.0
+
 
 # Slack Alerts
 def send_slack_alert(message):
@@ -75,13 +94,14 @@ def send_slack_alert(message):
         return
     requests.post(SLACK_WEBHOOK, json={"text": message})
 
-# Main Pipeline 
+
+# Main Pipeline
 def run_pipeline(query="Artificial Intelligence", limit=10):
     data = fetch_news(query, limit)
     results = []
 
     for d in data:
-        sentiment = analyze_sentiment(d["text"])
+        sentiment, score = analyze_sentiment(d["text"])
         row = {
             "source": d["source"],
             "author": d["author"],
@@ -89,12 +109,13 @@ def run_pipeline(query="Artificial Intelligence", limit=10):
             "description": d["description"],
             "url": d["url"],
             "publishedAt": d["publishedAt"],
-            "sentiment": sentiment
+            "sentiment": sentiment,
+            "score": score
         }
         results.append(row)
 
         if sentiment.lower() == "negative":
-            send_slack_alert(f"⚠️ Negative sentiment detected:\n{d['title'][:200]}")
+            send_slack_alert(f"⚠️ Negative sentiment detected (score={score}):\n{d['title'][:200]}")
 
     # Save to CSV with UTF-8 BOM for Excel
     df = pd.DataFrame(results)
@@ -106,6 +127,7 @@ def run_pipeline(query="Artificial Intelligence", limit=10):
 
     return df
 
-# Run 
+
+# Run
 if __name__ == "__main__":
     run_pipeline("Artificial Intelligence", limit=10)
